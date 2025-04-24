@@ -1,0 +1,535 @@
+// app/index.tsx
+
+
+import React, { useEffect, useState } from 'react';
+import {
+ View, Text, TextInput, Button, ScrollView,
+ StyleSheet, Modal, Pressable, Image, Dimensions
+} from 'react-native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { Ionicons } from '@expo/vector-icons';
+import ProgressBar from 'react-native-progress/Bar';
+import { initializeApp } from 'firebase/app';
+import { getFirestore, doc, setDoc, getDoc } from 'firebase/firestore';
+import {
+ getAuth, createUserWithEmailAndPassword,
+ signInWithEmailAndPassword, GoogleAuthProvider,
+ signInWithCredential, onAuthStateChanged
+} from 'firebase/auth';
+import * as Google from 'expo-auth-session/providers/google';
+import * as WebBrowser from 'expo-web-browser';
+import { LineChart } from 'react-native-chart-kit';
+import * as Battery from 'expo-battery';
+import * as Location from 'expo-location';
+import Animated, { FadeIn } from 'react-native-reanimated';
+
+
+const screenWidth = Dimensions.get('window').width;
+const logo = require('../assets/images/Logo.png');
+
+
+const firebaseConfig = {
+ apiKey: "private",
+ authDomain: "priv",
+ projectId: "",
+ storageBucket: "",
+ messagingSenderId: "",
+ appId: "",
+ measurementId: ""
+};
+
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
+const Tab = createBottomTabNavigator();
+
+
+const styles = StyleSheet.create({
+ container: { flex: 1, padding: 20, backgroundColor: '#e0f2f1' },
+ centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#b2dfdb' },
+ title: { fontSize: 24, fontWeight: 'bold', color: '#00695c', marginBottom: 12 },
+ text: { fontSize: 16, marginTop: 10, color: '#004d40' },
+ input: { borderWidth: 1, borderRadius: 8, borderColor: '#004d40', padding: 10, marginTop: 10, backgroundColor: '#fff' },
+ modalContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.6)' },
+ modalContent: {
+   backgroundColor: '#fff', padding: 24, borderRadius: 16,
+   alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+   shadowOpacity: 0.3, shadowRadius: 6, elevation: 8
+ },
+ closeButton: {
+   marginTop: 16, backgroundColor: '#00796b', paddingVertical: 12,
+   paddingHorizontal: 20, borderRadius: 8
+ }
+});
+
+
+// 1) LoginScreen
+const LoginScreen = ({ onLoginSuccess }) => {
+ const [email,setEmail]=useState(''),
+       [password,setPassword]=useState(''),
+       [error,setError]=useState('');
+
+
+ const [request,response,promptAsync] = Google.useAuthRequest({
+   expoClientId: '54652976022-0ggk55son2bnda79gf73dmmjchsvudun.apps.googleusercontent.com',
+   iosClientId:   '54652976022-0ggk55son2bnda79gf73dmmjchsvudun.apps.googleusercontent.com',
+   androidClientId:'54652976022-0ggk55son2bnda79gf73dmmjchsvudun.apps.googleusercontent.com',
+   webClientId:   '54652976022-0ggk55son2bnda79gf73dmmjchsvudun.apps.googleusercontent.com'
+ });
+
+
+ useEffect(()=>{
+   if(response?.type==='success'){
+     const { id_token } = response.params;
+     const cred = GoogleAuthProvider.credential(id_token);
+     signInWithCredential(auth, cred)
+       .then(async res=>{
+         const u=res.user;
+         await setDoc(doc(db,'users',u.uid),{
+           displayName: u.displayName||u.email,
+           ecoXP:0, createdAt:new Date().toISOString()
+         },{merge:true});
+         onLoginSuccess(u.uid);
+       })
+       .catch(()=>setError('Google login failed.'));
+   }
+ },[response]);
+
+
+ const handleLogin=async()=>{
+   try{
+     const uc=await signInWithEmailAndPassword(auth, email, password);
+     onLoginSuccess(uc.user.uid);
+   }catch{
+     setError('Login failed.');
+   }
+ };
+ const handleSignup=async()=>{
+   try{
+     const uc=await createUserWithEmailAndPassword(auth, email, password);
+     await setDoc(doc(db,'users',uc.user.uid),{
+       displayName: email, ecoXP:0, createdAt:new Date().toISOString()
+     });
+     onLoginSuccess(uc.user.uid);
+   }catch(e){
+     setError(e.message);
+   }
+ };
+
+
+ return (
+   <View style={styles.container}>
+     <Text style={styles.title}>Welcome to NeuroClimate</Text>
+     <TextInput placeholder="Email" value={email} onChangeText={setEmail} style={styles.input} autoCapitalize="none"/>
+     <TextInput placeholder="Password" value={password} onChangeText={setPassword} secureTextEntry style={styles.input}/>
+     <Button title="Login" onPress={handleLogin}/>
+     <Button title="Sign Up" onPress={handleSignup} color="#888"/>
+     <View style={{marginTop:10}}/>
+     <Button title="Sign in with Google" onPress={()=>promptAsync()} color="#4285F4"/>
+     {error?<Text style={{color:'red',marginTop:10}}>{error}</Text>:null}
+   </View>
+ );
+};
+
+
+// 2) SplashScreen
+function SplashScreen({ onDone }){
+ useEffect(()=>{
+   const to=setTimeout(onDone,2500);
+   return()=>clearTimeout(to);
+ },[]);
+ return (
+   <Animated.View entering={FadeIn.duration(500)} style={styles.centered}>
+     <Image source={logo} style={{width:200,height:200}} />
+   </Animated.View>
+ );
+}
+
+
+// 3) CarbonTracker
+const CarbonTracker = () => {
+ const [ecoXP,setEcoXP]=useState(0),
+       [streak,setStreak]=useState(0),
+       [lastActiveDate,setLastActiveDate]=useState(null),
+       [carbonTip,setCarbonTip]=useState(''),
+       [userId,setUserId]=useState(null),
+       [showLevelUp,setShowLevelUp]=useState(false),
+       [travelDistance,setTravelDistance]=useState(0),
+       [lastLoc,setLastLoc]=useState(null),
+       [shoppingCO2,setShoppingCO2]=useState(0);
+
+
+ // Gmail token should be captured in LoginScreen and stored here if implemented
+ const fetchShoppingCO2 = async () => {
+   // TODO: implement Gmail + Climatiq flow
+   return Math.random()*1.5;
+ };
+
+
+ useEffect(()=>{
+   const unsub = onAuthStateChanged(auth,async user=>{
+     if(user){
+       setUserId(user.uid);
+       const snap=await getDoc(doc(db,'users',user.uid));
+       if(snap.exists()){
+         const d=snap.data();
+         setEcoXP(d.ecoXP||0);
+         setStreak(d.streak||0);
+         setLastActiveDate(d.lastActiveDate||null);
+         setCarbonTip(d.lastTip||'');
+       } else {
+         await updateFirestore(user.uid,0,1,new Date().toISOString(),'');
+       }
+     }
+   });
+   return()=>unsub();
+ },[]);
+
+
+ // travel tracking
+ useEffect(() => {
+   (async ()=> {
+     let { status } = await Location.requestForegroundPermissionsAsync();
+     if(status!=='granted') return;
+     const loc = await Location.getCurrentPositionAsync({});
+     setLastLoc(loc.coords);
+     const sub = await Location.watchPositionAsync(
+       { accuracy: Location.Accuracy.Balanced, distanceInterval: 50 },
+       update=> {
+         if(lastLoc){
+           const dist = haversine(lastLoc, update.coords);
+           setTravelDistance(d=>d+dist);
+         }
+         setLastLoc(update.coords);
+       }
+     );
+     return ()=>sub.remove();
+   })();
+ }, [lastLoc]);
+
+
+ const haversine = (a,b) =>{
+   const toRad=x=>(x*Math.PI)/180;
+   const R=6371;
+   const dLat=toRad(b.latitude-a.latitude);
+   const dLon=toRad(b.longitude-a.longitude);
+   const A = Math.sin(dLat/2)**2 +
+     Math.cos(toRad(a.latitude))*Math.cos(toRad(b.latitude))*
+     Math.sin(dLon/2)**2;
+   return R*2*Math.atan2(Math.sqrt(A),Math.sqrt(1-A));
+ };
+
+
+ const handleSubmit=async()=>{
+   try{
+     const level=await Battery.getBatteryLevelAsync();
+     const batteryUsage=(1-level)*100;
+     const res=await fetch("https://beta3.api.climatiq.io/estimate",{
+       method:"POST",headers:{
+         Authorization:"Bearer 26FAPQ8RTS2S30AHYE12N9MBY4",
+         "Content-Type":"application/json"
+       },
+       body:JSON.stringify({
+         emission_factor:{ activity_id:"passenger_vehicle-vehicle_type_car-fuel_source_na-distance_na-engine_size_na" },
+         parameters:{ distance:travelDistance, distance_unit:"km" }
+       })
+     });
+     const travelData=await res.json();
+     const shopCO2 = await fetchShoppingCO2();
+
+
+     const xpGain = batteryUsage*1 + (travelData.co2e||2)*10 + shopCO2*8;
+     const newXP = ecoXP + Math.round(xpGain);
+
+
+     const tips=[
+       'Enable dark mode to conserve battery.',
+       'Schedule device sleep during idle hours.',
+       'Reduce background app usage.',
+       'Consider energy-efficient device settings.'
+     ];
+     const tip=tips[Math.floor(Math.random()*tips.length)];
+     setCarbonTip(tip);
+
+
+     if(Math.floor(newXP/100)>Math.floor(ecoXP/100)) setShowLevelUp(true);
+     setEcoXP(newXP);
+     setShoppingCO2(shopCO2);
+
+
+     if(userId){
+       await updateFirestore(userId,newXP,streak+1,new Date().toISOString(),tip);
+     }
+   }catch(e){console.error(e);}
+ };
+
+
+ const updateFirestore=async(uid,xp,st,lastDate,tip)=>{
+   try{
+     await setDoc(doc(db,'users',uid),{
+       ecoXP:xp, streak:st,
+       lastActiveDate:lastDate, lastTip:tip,
+       lastUpdated:new Date().toISOString()
+     },{merge:true});
+   }catch(e){console.error(e);}
+ };
+
+
+ return (
+   <ScrollView style={styles.container}>
+     <Text style={styles.title}>Tracker</Text>
+     <Text style={styles.text}>🚗 Travel: {travelDistance.toFixed(2)} km</Text>
+     <Text style={styles.text}>🔋 Battery usage: {((1 - travelDistance*0)+((1-1)*100)).toFixed(0)}%</Text>
+     <Text style={styles.text}>🛒 Shopping CO₂: {shoppingCO2.toFixed(2)} kg</Text>
+     <Text style={{color:'#00695c',marginTop:12}}>Tip: {carbonTip}</Text>
+     <Button title="Submit All" onPress={handleSubmit} color="#00796b"/>
+     <Text style={{marginTop:16}}>EcoXP: {ecoXP}</Text>
+     <Text>Streak: {streak} days</Text>
+     <Modal visible={showLevelUp} transparent animationType="fade">
+       <View style={styles.modalContainer}>
+         <View style={styles.modalContent}>
+           <Text style={styles.title}>🎉 Level Up!</Text>
+           <Pressable onPress={()=>setShowLevelUp(false)} style={styles.closeButton}>
+             <Text style={{color:'#fff'}}>Close</Text>
+           </Pressable>
+         </View>
+       </View>
+     </Modal>
+   </ScrollView>
+ );
+};
+
+
+// 4) Dashboard
+const Dashboard = () => (
+ <ScrollView style={styles.container}>
+   <Text style={styles.title}>NeuroClimate Dashboard</Text>
+   <Text style={styles.text}>Your Weekly Carbon Stats</Text>
+   <LineChart
+     data={{
+       labels:['Mon','Tue','Wed','Thu','Fri','Sat','Sun'],
+       datasets:[{data:[3,5,2,4,7,6,5]}]
+     }}
+     width={screenWidth-40} height={220} yAxisSuffix="kg"
+     chartConfig={{
+       backgroundColor:'#b2dfdb', backgroundGradientFrom:'#b2dfdb',
+       backgroundGradientTo:'#e0f2f1', decimalPlaces:1,
+       color:(opacity=1)=>`rgba(0,105,92,${opacity})`, labelColor:()=>'#004d40',
+       propsForDots:{r:'5',strokeWidth:'2',stroke:'#00796b'}
+     }}
+     style={{marginVertical:16,borderRadius:16}}
+   />
+   <Text style={styles.text}>Keep up the great work!</Text>
+ </ScrollView>
+);
+ // 5) MissionsGame
+const MissionsGame = () => {
+ const [missions,setMissions]=useState([
+   {id:1,text:'Unplug unused devices — +10 XP',done:false},
+   {id:2,text:'Use public transport — +20 XP',done:false},
+   {id:3,text:'Sleep mode on Echo — +15 XP',done:false}
+ ]);
+ const toggle=id=>setMissions(ms=>ms.map(m=>m.id===id?{...m,done:!m.done}:m));
+ return (
+   <ScrollView style={styles.container}>
+     <Text style={styles.title}>Daily EcoMissions</Text>
+     {missions.map(m=>
+       <Pressable
+         key={m.id}
+         onPress={()=>toggle(m.id)}
+         style={{
+           marginTop:10,
+           backgroundColor:m.done?'#c8e6c9':'#fff',
+           padding:12,borderRadius:8
+         }}
+       >
+         <Text>{m.done?'✅ ':''}{m.text}</Text>
+       </Pressable>
+     )}
+   </ScrollView>
+ );
+};
+
+
+// 6) Community
+const Community = () => {
+ const [posts,setPosts]=useState([]),
+       [newPost,setNewPost]=useState(''),
+       [user,setUser]=useState(null);
+ useEffect(()=>{
+   const unsub=onAuthStateChanged(auth,u=>u&&setUser(u));
+   (async()=>{
+     const snap=await getDoc(doc(db,'community','feed'));
+     setPosts(snap.exists()?snap.data().posts:[]);
+   })();
+   return()=>unsub();
+ },[]);
+ const handlePost=async()=>{
+   if(!newPost.trim())return;
+   const p={user:user?.email||'Anon',text:newPost,timestamp:new Date().toISOString()};
+   const up=[p,...posts];
+   setPosts(up); setNewPost('');
+   await setDoc(doc(db,'community','feed'),{posts:up});
+ };
+ return (
+   <ScrollView style={styles.container}>
+     <Text style={styles.title}>Community</Text>
+     <TextInput placeholder="Share your impact..." value={newPost}
+       onChangeText={setNewPost} style={styles.input}/>
+     <Button title="Post" onPress={handlePost}/>
+     {posts.map((p,i)=>
+       <View key={i} style={{marginTop:12,padding:10,backgroundColor:'#fff',borderRadius:8}}>
+         <Text style={{fontWeight:'bold'}}>{p.user}</Text>
+         <Text>{p.text}</Text>
+         <Text style={{fontSize:10,color:'#999'}}>{new Date(p.timestamp).toLocaleString()}</Text>
+       </View>
+     )}
+   </ScrollView>
+ );
+};
+
+
+// 7) Messages
+const Messages = () => {
+ const [user,setUser]=useState(null),
+       [recipient,setRecipient]=useState(''),
+       [message,setMessage]=useState(''),
+       [messages,setMessages]=useState([]);
+ useEffect(()=>{
+   const unsub=onAuthStateChanged(auth,async u=>{if(u){
+     setUser(u);
+     const snap=await getDoc(doc(db,'dm',u.uid));
+     setMessages(snap.exists()?snap.data().messages:[]);
+   }});
+   return()=>unsub();
+ },[]);
+ const handleSend=async()=>{
+   if(!recipient||!message)return;
+   const m={to:recipient,from:user.email,text:message,timestamp:new Date().toISOString()};
+   const up=[m,...messages];
+   setMessages(up); setMessage('');
+   await setDoc(doc(db,'dm',user.uid),{messages:up});
+ };
+ return (
+   <ScrollView style={styles.container}>
+     <Text style={styles.title}>Direct Messages</Text>
+     <TextInput placeholder="To (email)" value={recipient}
+       onChangeText={setRecipient} style={styles.input}/>
+     <TextInput placeholder="Message" value={message}
+       onChangeText={setMessage} style={styles.input}/>
+     <Button title="Send" onPress={handleSend}/>
+     {messages.map((m,i)=>
+       <View key={i} style={{marginTop:12,padding:10,backgroundColor:'#fff',borderRadius:8}}>
+         <Text style={{fontWeight:'bold'}}>To: {m.to}</Text>
+         <Text>{m.text}</Text>
+         <Text style={{fontSize:10,color:'#999'}}>{new Date(m.timestamp).toLocaleString()}</Text>
+       </View>
+     )}
+   </ScrollView>
+ );
+};
+
+
+// 8) Profile
+const Profile = () => {
+ const [user,setUser]=useState(null),
+       [displayName,setDisplayName]=useState(''),
+       [avatar,setAvatar]=useState('https://via.placeholder.com/100'),
+       [ecoXP,setEcoXP]=useState(0);
+ useEffect(()=>{
+   const unsub=onAuthStateChanged(auth,async u=>{if(u){
+     setUser(u);
+     const ref=await getDoc(doc(db,'users',u.uid));
+     if(ref.exists()){
+       const d=ref.data();
+       setDisplayName(d.displayName||'');
+       if(d.avatar) setAvatar(d.avatar);
+       if(d.ecoXP) setEcoXP(d.ecoXP);
+     }
+   }});
+   return()=>unsub();
+ },[]);
+ const handleLogout=async()=>await auth.signOut();
+ const handleSaveProfile=async()=>{
+   if(user){
+     await setDoc(doc(db,'users',user.uid),{
+       displayName,avatar,ecoXP,updatedAt:new Date().toISOString()
+     },{merge:true});
+   }
+ };
+ return (
+   <ScrollView style={styles.container} contentContainerStyle={{alignItems:'center'}}>
+     <Text style={styles.title}>Your Profile</Text>
+     <Text>{displayName}</Text>
+     <View style={{margin:16}}>
+       <Text>Avatar:</Text>
+       <Text style={{fontSize:60}}>{avatar}</Text>
+     </View>
+     <Text style={[styles.title,{marginTop:24}]}>Earned Badges:</Text>
+     <Text>🏅 Power Saver</Text><Text>🚶‍♂️ Green Commuter</Text><Text>📱 Smart Home Optimizer</Text>
+     <TextInput placeholder="Display Name" value={displayName}
+       onChangeText={setDisplayName} style={styles.input}/>
+     <Text style={{marginTop:16}}>Choose an Avatar:</Text>
+     <ScrollView horizontal style={{marginVertical:10}}>
+       {['🌱','🌍','☀️','🍃'].map((e,i)=>
+         <Pressable key={i} onPress={()=>setAvatar(e)}
+           style={{
+             marginRight:10,padding:10,borderRadius:30,
+             backgroundColor:avatar===e?'#c8e6c9':'#fff',
+             borderWidth:1,borderColor:'#ccc'
+           }}>
+           <Text style={{fontSize:40}}>{e}</Text>
+         </Pressable>
+       )}
+     </ScrollView>
+     <Button title="Save Profile" onPress={handleSaveProfile}/>
+     <Button title="Log Out" onPress={handleLogout} color="#f44336"/>
+   </ScrollView>
+ );
+};
+
+
+// 9) Page with Navigator
+export default function Page() {
+ const [isLoggedIn,setIsLoggedIn]=useState(false),
+       [showSplash,setShowSplash]=useState(true);
+
+
+ useEffect(()=>{
+   const unsub=onAuthStateChanged(auth,user=>setIsLoggedIn(!!user));
+   return()=>unsub();
+ },[]);
+
+
+ if(showSplash) return <SplashScreen onDone={()=>setShowSplash(false)}/>;
+ if(!isLoggedIn)  return <LoginScreen onLoginSuccess={()=>setIsLoggedIn(true)}/>;
+
+
+ return (
+   <Tab.Navigator screenOptions={({route})=>({
+     tabBarIcon:({color,size})=>{
+       let icon='ios-home';
+       if(route.name==='Dashboard') icon='ios-stats-chart';
+       else if(route.name==='Tracker') icon='ios-leaf';
+       else if(route.name==='Missions') icon='ios-trophy';
+       else if(route.name==='Community') icon='ios-people';
+       else if(route.name==='Messages') icon='chatbubble-ellipses';
+       else if(route.name==='Profile') icon='ios-person';
+       return <Ionicons name={icon} size={size} color={color}/>;
+     },
+     tabBarActiveTintColor:'#00796b',
+     tabBarInactiveTintColor:'gray',
+   })}>
+     <Tab.Screen name="Dashboard" component={Dashboard}/>
+     <Tab.Screen name="Tracker"   component={CarbonTracker}/>
+     <Tab.Screen name="Missions"  component={MissionsGame}/>
+     <Tab.Screen name="Community" component={Community}/>
+     <Tab.Screen name="Messages"  component={Messages}/>
+     <Tab.Screen name="Profile"   component={Profile}/>
+   </Tab.Navigator>
+ );
+}
+
+
+
