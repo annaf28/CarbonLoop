@@ -1,0 +1,591 @@
+import React, { useEffect, useState } from 'react';
+import { View, Text, TextInput, Button, ScrollView, StyleSheet, Modal, Pressable, Image } from 'react-native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { Ionicons } from '@expo/vector-icons';
+import ProgressBar from 'react-native-progress/Bar';
+import { initializeApp } from 'firebase/app';
+import { getFirestore, doc, setDoc, getDoc } from 'firebase/firestore';
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, GoogleAuthProvider, signInWithCredential, onAuthStateChanged } from 'firebase/auth';
+import * as Google from 'expo-auth-session/providers/google';
+import * as WebBrowser from 'expo-web-browser';
+
+
+const firebaseConfig = {
+ apiKey: "private",
+ authDomain: "private",
+ projectId: "private",
+ storageBucket: "private",
+ messagingSenderId: "private",
+ appId: "private",
+ measurementId: "private"
+};
+
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
+
+
+const styles = StyleSheet.create({
+ container: {
+   flex: 1,
+   padding: 20,
+   backgroundColor: '#f0f4f7',
+ },
+ centered: {
+   flex: 1,
+   justifyContent: 'center',
+   alignItems: 'center',
+   padding: 20,
+   backgroundColor: '#e8f5e9',
+ },
+ title: {
+   fontSize: 24,
+   fontWeight: 'bold',
+   color: '#2e7d32',
+   marginBottom: 12,
+ },
+ text: {
+   fontSize: 16,
+   marginTop: 10,
+   color: '#555',
+ },
+ input: {
+   borderWidth: 1,
+   borderRadius: 8,
+   borderColor: '#ccc',
+   padding: 10,
+   marginTop: 10,
+   backgroundColor: '#fff',
+ },
+ modalContainer: {
+   flex: 1,
+   justifyContent: 'center',
+   alignItems: 'center',
+   backgroundColor: 'rgba(0,0,0,0.6)',
+ },
+ modalContent: {
+   backgroundColor: '#ffffff',
+   padding: 24,
+   borderRadius: 16,
+   alignItems: 'center',
+   shadowColor: '#000',
+   shadowOffset: { width: 0, height: 2 },
+   shadowOpacity: 0.3,
+   shadowRadius: 6,
+   elevation: 8,
+ },
+ closeButton: {
+   marginTop: 16,
+   backgroundColor: '#66bb6a',
+   paddingVertical: 12,
+   paddingHorizontal: 20,
+   borderRadius: 8,
+ }
+});
+
+
+const CarbonTracker = () => {
+ const [miles, setMiles] = useState('');
+ const [deviceUsage, setDeviceUsage] = useState('');
+ const [energy, setEnergy] = useState('');
+ const [ecoXP, setEcoXP] = useState(0);
+ const [streak, setStreak] = useState(0);
+ const [lastActiveDate, setLastActiveDate] = useState(null);
+ const [carbonTip, setCarbonTip] = useState('');
+ const [userId, setUserId] = useState(null);
+ const [showLevelUp, setShowLevelUp] = useState(false);
+
+
+ useEffect(() => {
+   const unsubscribe = onAuthStateChanged(auth, async user => {
+     if (user) {
+       setUserId(user.uid);
+       const snapshot = await getDoc(doc(db, 'users', user.uid));
+       if (snapshot.exists()) {
+         const data = snapshot.data();
+         setEcoXP(data.ecoXP || 0);
+         setStreak(data.streak || 0);
+         setLastActiveDate(data.lastActiveDate || null);
+       } else {
+         const today = new Date().toISOString().split('T')[0];
+   const last = lastActiveDate;
+   const newStreak = last === today ? streak : (new Date(today) - new Date(last)) === 86400000 ? streak + 1 : 1;
+   setStreak(newStreak);
+   setLastActiveDate(today);
+   const tips = [
+     'Try setting your devices to sleep mode when not in use.',
+     'Unplug unused chargers to save energy.',
+     'Consider using smart plugs to automate energy savings.',
+     'Adjust your thermostat for more efficient heating/cooling.'
+   ];
+   const randomTip = tips[Math.floor(Math.random() * tips.length)];
+   setCarbonTip(randomTip);
+   await setDoc(doc(db, 'users', userId), {
+     ecoXP: newXP,
+     streak: newStreak,
+     lastActiveDate: today,
+     lastUpdated: new Date().toISOString()
+   });
+       }
+     }
+   });
+   return () => unsubscribe();
+ }, []);
+
+
+ const handleSubmit = async () => {
+   const xpGain = parseInt(miles || '0') * 1 + parseInt(deviceUsage || '0') * 3 + parseInt(energy || '0') * 2;
+   const newXP = ecoXP + xpGain;
+   if (Math.floor(newXP / 100) > Math.floor(ecoXP / 100)) {
+     setShowLevelUp(true);
+   }
+   setEcoXP(newXP);
+   if (userId) {
+     await setDoc(doc(db, 'users', userId), {
+       ecoXP: newXP,
+       lastUpdated: new Date().toISOString()
+     });
+   }
+ };
+
+
+ return (
+   <ScrollView style={styles.container}>
+     <Text style={styles.title}>Carbon Input</Text>
+     <Text style={{ fontSize: 14, marginTop: 8, color: '#2e7d32' }}>💡 Tip: {carbonTip}</Text>
+     <Text style={{ fontSize: 14, marginTop: 4, color: '#2e7d32' }}>🔥 Streak: {streak} day(s) in a row!</Text>
+     <Text style={styles.text}>Battery usage (mAh) today:</Text>
+     <TextInput value={miles} onChangeText={setMiles} keyboardType="numeric" style={styles.input} />
+     <Text style={styles.text}>Smart device usage hours (Echo, FireTV, etc.):</Text>
+     <TextInput value={deviceUsage} onChangeText={setDeviceUsage} keyboardType="numeric" style={styles.input} />
+     <Text style={styles.text}>Home energy usage (kWh):</Text>
+     <TextInput value={energy} onChangeText={setEnergy} keyboardType="numeric" style={styles.input} />
+     <Button title="Submit" onPress={handleSubmit} />
+     <Text style={{ marginTop: 16 }}>Current EcoXP: {ecoXP}</Text>
+     <Modal visible={showLevelUp} transparent animationType="fade">
+       <View style={styles.modalContainer}>
+         <View style={styles.modalContent}>
+           <Text style={styles.title}>🎉 Level Up!</Text>
+           <Text>You’ve reached a new level!</Text>
+           <Pressable onPress={() => setShowLevelUp(false)} style={styles.closeButton}>
+             <Text style={{ color: 'white' }}>Close</Text>
+           </Pressable>
+         </View>
+       </View>
+     </Modal>
+   </ScrollView>
+ );
+};
+
+
+const Messages = () => {
+ const [user, setUser] = useState(null);
+ const [recipient, setRecipient] = useState('');
+ const [message, setMessage] = useState('');
+ const [messages, setMessages] = useState([]);
+
+
+ useEffect(() => {
+   const unsubscribe = onAuthStateChanged(auth, async currentUser => {
+     if (currentUser) {
+       setUser(currentUser);
+       const snapshot = await getDoc(doc(db, 'dm', currentUser.uid));
+       if (snapshot.exists()) {
+         setMessages(snapshot.data().messages || []);
+       }
+     }
+   });
+   return () => unsubscribe();
+ }, []);
+
+
+ const handleSend = async () => {
+   if (!recipient || !message) return;
+   const newMsg = {
+     to: recipient,
+     from: user.email,
+     text: message,
+     timestamp: new Date().toISOString(),
+   };
+   const updated = [newMsg, ...messages];
+   setMessages(updated);
+   setMessage('');
+   await setDoc(doc(db, 'dm', user.uid), { messages: updated });
+ };
+
+
+ return (
+   <ScrollView style={styles.container}>
+     <Text style={styles.title}>Direct Messages</Text>
+     <TextInput placeholder="To (email)" value={recipient} onChangeText={setRecipient} style={styles.input} />
+     <TextInput placeholder="Message" value={message} onChangeText={setMessage} style={styles.input} />
+     <Button title="Send" onPress={handleSend} />
+     {messages.map((msg, idx) => (
+       <View key={idx} style={{ marginTop: 12, padding: 10, backgroundColor: '#fff', borderRadius: 8 }}>
+         <Text style={{ fontWeight: 'bold' }}>To: {msg.to}</Text>
+         <Text>{msg.text}</Text>
+         <Text style={{ fontSize: 10, color: '#999' }}>{new Date(msg.timestamp).toLocaleString()}</Text>
+       </View>
+     ))}
+   </ScrollView>
+ );
+};
+
+
+const Tab = createBottomTabNavigator();
+
+
+import { LineChart } from 'react-native-chart-kit';
+import { Dimensions } from 'react-native';
+
+
+const screenWidth = Dimensions.get('window').width;
+
+
+const Dashboard = () => (
+ <ScrollView style={styles.container}>
+   <Text style={styles.title}>CarbonLoop Dashboard</Text>
+   <Text style={styles.text}>Your Weekly Carbon Stats</Text>
+   <LineChart
+     data={{
+       labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+       datasets: [
+         { data: [3, 5, 2, 4, 7, 6, 5] }
+       ]
+     }}
+     width={screenWidth - 40}
+     height={220}
+     yAxisSuffix="kg"
+     chartConfig={{
+       backgroundColor: '#e8f5e9',
+       backgroundGradientFrom: '#e8f5e9',
+       backgroundGradientTo: '#f0f4f7',
+       decimalPlaces: 1,
+       color: (opacity = 1) => `rgba(46, 125, 50, ${opacity})`,
+       labelColor: () => '#555',
+       propsForDots: { r: '5', strokeWidth: '2', stroke: '#4caf50' }
+     }}
+     style={{ marginVertical: 16, borderRadius: 16 }}
+   />
+   <Text style={styles.text}>Your weekly carbon reduction progress is looking great!</Text>
+ </ScrollView>
+);
+
+
+const MissionsGame = () => {
+ const [missions, setMissions] = useState([
+   { id: 1, text: 'Unplug unused devices today — +10 EcoXP', done: false },
+   { id: 2, text: 'Use public transport — +20 EcoXP', done: false },
+   { id: 3, text: 'Set FireTV or Echo to sleep mode — +15 EcoXP', done: false },
+ ]);
+
+
+ const toggleMission = (id) => {
+   setMissions(missions.map(m => m.id === id ? { ...m, done: !m.done } : m));
+ };
+
+
+ return (
+   <ScrollView style={styles.container}>
+     <Text style={styles.title}>Daily EcoMissions</Text>
+     {missions.map(mission => (
+       <Pressable
+         key={mission.id}
+         onPress={() => toggleMission(mission.id)}
+         style={{ marginTop: 10, backgroundColor: mission.done ? '#c8e6c9' : '#ffffff', padding: 12, borderRadius: 8 }}>
+         <Text>{mission.done ? '✅ ' : ''}{mission.text}</Text>
+       </Pressable>
+     ))}
+   </ScrollView>
+ );
+};
+
+
+const Community = () => {
+ const [posts, setPosts] = useState([]);
+ const [newPost, setNewPost] = useState('');
+ const [user, setUser] = useState(null);
+
+
+ useEffect(() => {
+   const unsubscribeAuth = onAuthStateChanged(auth, currentUser => {
+     if (currentUser) setUser(currentUser);
+   });
+
+
+   const fetchPosts = async () => {
+     const snapshot = await getDoc(doc(db, 'community', 'feed'));
+     if (snapshot.exists()) {
+       setPosts(snapshot.data().posts || []);
+     }
+   };
+
+
+   fetchPosts();
+   return () => unsubscribeAuth();
+ }, []);
+
+
+ const handlePost = async () => {
+   if (!newPost.trim()) return;
+   const post = {
+     text: newPost,
+     user: user?.email || 'Anonymous',
+     timestamp: new Date().toISOString(),
+   };
+   const updatedPosts = [post, ...posts];
+   setPosts(updatedPosts);
+   setNewPost('');
+   await setDoc(doc(db, 'community', 'feed'), { posts: updatedPosts });
+ };
+
+
+ return (
+   <ScrollView style={styles.container}>
+     <Text style={styles.title}>Community Feed</Text>
+     <TextInput
+       placeholder="Share your impact..."
+       value={newPost}
+       onChangeText={setNewPost}
+       style={styles.input}
+     />
+     <Button title="Post" onPress={handlePost} />
+     {posts.map((post, idx) => (
+       <View key={idx} style={{ marginTop: 12, padding: 10, backgroundColor: '#fff', borderRadius: 8 }}>
+         <Text style={{ fontWeight: 'bold' }}>{post.user}</Text>
+         <Text>{post.text}</Text>
+         <Text style={{ fontSize: 10, color: '#999' }}>{new Date(post.timestamp).toLocaleString()}</Text>
+       </View>
+     ))}
+   </ScrollView>
+ );
+};
+
+
+const Profile = () => {
+ const [user, setUser] = useState(null);
+ const [displayName, setDisplayName] = useState('');
+ const [avatar, setAvatar] = useState('https://via.placeholder.com/100');
+ const [ecoXP, setEcoXP] = useState(0);
+
+
+ useEffect(() => {
+   const unsubscribe = onAuthStateChanged(auth, async currentUser => {
+     if (currentUser) {
+       setUser(currentUser);
+       const userRef = await getDoc(doc(db, 'users', currentUser.uid));
+       if (userRef.exists()) {
+         const data = userRef.data();
+         setDisplayName(data.displayName || '');
+         if (data.avatar) setAvatar(data.avatar);
+         if (data.ecoXP) setEcoXP(data.ecoXP);
+       }
+     }
+   });
+   return () => unsubscribe();
+ }, []);
+
+
+ const handleLogout = async () => {
+   await auth.signOut();
+ };
+
+
+ const handleSaveProfile = async () => {
+   if (user) {
+     await setDoc(doc(db, 'users', user.uid), {
+       displayName,
+       avatar,
+       ecoXP,
+       updatedAt: new Date().toISOString()
+     }, { merge: true });
+   }
+ };
+
+
+ return (
+   <ScrollView style={styles.container} contentContainerStyle={{ alignItems: 'center' }}>
+     <Text style={styles.title}>Your Profile</Text>
+     <Text>{displayName}</Text>
+     <View style={{ margin: 16 }}>
+       <Text>Avatar:</Text>
+       <Text style={{ fontSize: 60 }}>{avatar}</Text>
+     </View>
+     <Text style={[styles.title, { marginTop: 24 }]}>Earned Badges:</Text>
+     <Text>🏅 Power Saver</Text>
+     <Text>🚶‍♂️ Green Commuter</Text>
+     <Text>📱 Smart Home Optimizer</Text>
+     <TextInput
+       placeholder="Display Name"
+       value={displayName}
+       onChangeText={setDisplayName}
+       style={styles.input}
+     />
+     <Text style={{ marginTop: 16 }}>Choose an Avatar:</Text>
+     <ScrollView horizontal style={{ marginVertical: 10 }}>
+       {['🌱', '🌍', '☀️', '🍃'].map((emoji, index) => (
+         <Pressable
+           key={index}
+           onPress={() => setAvatar(emoji)}
+           style={{ marginRight: 10, padding: 10, borderRadius: 30, backgroundColor: avatar === emoji ? '#c8e6c9' : '#ffffff', borderWidth: 1, borderColor: '#ccc' }}>
+           <Text style={{ fontSize: 40 }}>{emoji}</Text>
+         </Pressable>
+       ))}
+     </ScrollView>
+     <Button title="Save Profile" onPress={handleSaveProfile} />
+     <Button title="Log Out" onPress={handleLogout} color="#f44336" />
+   </ScrollView>
+ );
+};
+
+
+// expo-auth-session redirect workaround
+WebBrowser.maybeCompleteAuthSession();
+
+
+const LoginScreen = ({ onLoginSuccess }) => {
+ const [email, setEmail] = useState('');
+ const [password, setPassword] = useState('');
+ const [error, setError] = useState('');
+
+
+ const [request, response, promptAsync] = Google.useAuthRequest({
+   expoClientId: 'private',
+   iosClientId: 'private',
+   androidClientId: 'private',
+   webClientId: 'priavte'
+ });
+
+
+ useEffect(() => {
+   if (response?.type === 'success') {
+     const { id_token } = response.params;
+     const credential = GoogleAuthProvider.credential(id_token);
+     signInWithCredential(auth, credential)
+       .then(async result => {
+         const user = result.user;
+         await setDoc(doc(db, 'users', user.uid), {
+           displayName: user.displayName || user.email,
+           ecoXP: 0,
+           createdAt: new Date().toISOString()
+         }, { merge: true });
+         onLoginSuccess(user.uid);
+       })
+       .catch(err => setError('Google login failed. Try again.'));
+   }
+ }, [response]);
+
+
+   const handleLogin = async () => {
+   try {
+     const userCredential = await signInWithEmailAndPassword(auth, email, password);
+     onLoginSuccess(userCredential.user.uid);
+   } catch (err) {
+     setError('Login failed. Check credentials or try signing up.');
+   }
+ };
+
+
+ const handleSignup = async () => {
+   try {
+     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+     await setDoc(doc(db, 'users', userCredential.user.uid), {
+       displayName: email,
+       ecoXP: 0,
+       createdAt: new Date().toISOString()
+     });
+     onLoginSuccess(userCredential.user.uid);
+   } catch (err) {
+     setError(err.message);
+   }
+ };
+
+
+ return (
+   <View style={styles.container}>
+     <Text style={styles.title}>Welcome to CarbonLoop</Text>
+     <TextInput placeholder="Email" value={email} onChangeText={setEmail} style={styles.input} autoCapitalize="none" />
+     <TextInput placeholder="Password" value={password} onChangeText={setPassword} secureTextEntry style={styles.input} />
+     <Button title="Login" onPress={handleLogin} />
+     <Button title="Sign Up" onPress={handleSignup} color="#888" />
+     <View style={{ marginTop: 10 }} />
+     <Button title="Sign in with Google" onPress={() => promptAsync()} color="#4285F4" />
+     {error ? <Text style={{ color: 'red', marginTop: 10 }}>{error}</Text> : null}
+   </View>
+ );
+};
+
+
+import Animated, { FadeIn } from 'react-native-reanimated';
+
+
+function SplashScreen({ onDone }) {
+ useEffect(() => {
+   const timeout = setTimeout(onDone, 2500);
+   return () => clearTimeout(timeout);
+ }, []);
+
+
+ return (
+   <Animated.View entering={FadeIn.duration(500)} style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#e8f5e9' }}>
+     <Text style={{ fontSize: 36, fontWeight: 'bold', color: '#2e7d32' }}>🌿 CarbonLoop</Text>
+   </Animated.View>
+ );
+}
+
+
+export default function Page() {
+ const [isLoggedIn, setIsLoggedIn] = useState(false);
+ const [showSplash, setShowSplash] = useState(true);
+ const [uid, setUid] = useState(null);
+
+
+ useEffect(() => {
+   const unsubscribe = onAuthStateChanged(auth, user => {
+     if (user) {
+       setUid(user.uid);
+       setIsLoggedIn(true);
+     }
+   });
+   return () => unsubscribe();
+ }, []);
+
+
+ if (showSplash) return <SplashScreen onDone={() => setShowSplash(false)} />;
+ if (!isLoggedIn) return <LoginScreen onLoginSuccess={uid => { setUid(uid); setIsLoggedIn(true); }} />;
+
+
+ return (
+   <Tab.Navigator
+     screenOptions={({ route }) => ({
+       tabBarIcon: ({ color, size }) => {
+         let iconName;
+         if (route.name === 'Dashboard') iconName = 'ios-stats-chart';
+         else if (route.name === 'Tracker') iconName = 'ios-leaf';
+         else if (route.name === 'Missions') iconName = 'ios-trophy';
+         else if (route.name === 'Community') iconName = 'ios-people';
+         else if (route.name === 'Messages') iconName = 'chatbubble-ellipses';
+         else if (route.name === 'Profile') iconName = 'ios-person';
+         return <Ionicons name={iconName} size={size} color={color} />;
+       },
+       tabBarActiveTintColor: '#4caf50',
+       tabBarInactiveTintColor: 'gray',
+     })}
+   >
+     <Tab.Screen name="Dashboard" component={Dashboard} />
+     <Tab.Screen name="Tracker" component={CarbonTracker} />
+     <Tab.Screen name="Missions" component={MissionsGame} />
+     <Tab.Screen name="Community" component={Community} />
+     <Tab.Screen name="Messages" component={Messages} />
+     <Tab.Screen name="Profile" component={Profile} />
+   </Tab.Navigator>
+ );
+}
+
+
+
+
+
+
+
